@@ -41,12 +41,12 @@ public class Main {
 
     // Adds a new order to the regular queue.
     static void addRegularOrder(Queue<String> queue, String order) {
-        queue.offer(order);
+        queue.add(order);
     }
 
     // Adds a new order to the priority queue.
     static void addPriorityOrder(Queue<String> priorityQueue, String order) {
-        priorityQueue.offer(order);
+        priorityQueue.add(order);
     }
 
     // Processes the next available order, prioritizing priority orders first.
