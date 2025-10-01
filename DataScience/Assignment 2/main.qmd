@@ -1,0 +1,264 @@
+---
+title: "My Report"
+format: html
+jupyter: python3
+---
+
+### Setup and Data Loading
+
+```{python}
+import pandas as pd
+import numpy as np
+from sklearn.impute import SimpleImputer
+
+# Display settings
+pd.set_option("display.max_columns", 50)
+pd.set_option("display.max_rows", 100)
+
+# Load datasets
+df = pd.read_csv("data/steam.csv")
+df2 = pd.read_csv("data/steam_support_info.csv")
+```
+
+### Inspect Data
+checking the structure, missing values and information for both datasets
+
+#### First Dataset
+```{python}
+df.head()
+```
+```{python}
+df.tail()
+```
+```{python}
+df.info()
+df.describe()
+```
+
+#### Second Dataset
+```{python}
+df2.head()
+```
+
+```{python}
+df2.info()
+# won't work
+df2.describe()
+df2.isna().sum()
+```
+
+### Handling Missing Values
+impute missing values in `df` and `df2` 
+
+```{python}
+df["developer"] = df["developer"].fillna("Unknown")
+df["publisher"] = df["publisher"].fillna("Unknown")
+
+# Can be Alternative either drop the NaN or just fill it with "Missing"
+# df2 = df2.dropna()
+df2 = df2.fillna("Missing")
+```
+
+### Modify Index and Column Names
+modify index and rename columns (for merge)
+
+```{python}
+# set PK as index
+df = df.set_index("appid")
+
+# rename index
+df.index.name = "appid_index"
+
+# reset back to column
+df = df.reset_index()
+
+# change index value to start from 1 
+df.index = range(1, 1 + len(df))
+
+# change back the name (for easier merging)
+if "appid_index" in df.columns:
+    df = df.rename(columns = {"appid_index": "appid"})
+
+df2 = df2.rename(columns={"steam_appid": "appid"})
+df.head()
+
+```
+
+### Reshape Dataframes
+reshape using `melt` and `pivot` 
+
+```{python}
+df_melted = df.melt(
+    id_vars=["appid", "name"],
+    value_vars=["average_playtime", "median_playtime"],
+    var_name="playtime_type",
+    value_name="minutes"
+)
+
+df_melted.head()
+```
+
+```{python}
+df_pivoted = df_melted.pivot(
+    index=["appid", "name"],
+    columns="playtime_type",
+    values="minutes"
+).reset_index()
+
+df_pivoted.columns.name = None
+df_pivoted.head()
+```
+
+### Merge 2 Dataset
+combine and concatenate both dataframes
+
+```{python}
+df_merge = df.merge(df2, on="appid")
+df_merge.head()
+```
+
+```{python}
+# concat horizontally (column)
+df_concat = pd.concat([df, df2], axis=1)
+df_concat.head()
+```
+
+### Apply Function
+using `apply` and `applymap` 
+
+```{python}
+def pos_neg_ratio(row):
+    return row["positive_ratings"] / (row["negative_ratings"] + 1)
+
+df_merge["pos_neg_ratio"] = df_merge.apply(pos_neg_ratio, axis=1)
+df_merge.head()
+```
+
+```{python}
+def to_lower(value):
+    if isinstance(value, str):
+        return value.lower()
+    return value
+
+df2_lower = df2.applymap(to_lower)
+df2_lower.head()
+```
+
+### Query Data 
+filter data using `query`
+```{python}
+# filter just free games
+df_free_games = df_merge.query("price == 0")
+df_free_games.head()
+```
+
+```{python}
+df_good_games = df_merge.query("pos_neg_ratio > 10")
+df_good_games.head()
+```
+
+### Grouping and Aggregating
+Aggregating data 
+
+```{python}
+english_stats = df_merge.groupby("english", as_index=False).agg({
+    "positive_ratings": "sum",
+    "negative_ratings": "sum",
+    "price": "mean"
+})
+
+english_stats
+```
+
+```{python}
+overall_stats = df_merge.agg({
+    "positive_ratings": ["min", "max", "sum", "mean"],
+    "negative_ratings": ["min", "max", "sum", "mean"],
+    "price": ["min", "max", "sum","mean"]
+})
+overall_stats
+```
+
+### Missing Value Imputation with scikit-learn
+create missing value and use scikit learn `SimpleImputer`
+
+```{python}
+np.random.seed(50)
+
+col_name = ['price']
+mask = np.random.choice([True, False], size=df_merge[col_name].shape)
+
+# Ensure not all are False (force at least some NaNs)
+if not mask.any():
+    mask[np.random.randint(0, len(df_merge))] = True
+
+df_merge[col_name] = df_merge[col_name].mask(mask)
+df_merge[col_name].isna().sum()
+
+imputer = SimpleImputer(strategy="mean")
+
+# fit and transform
+df_merge["price"] = imputer.fit_transform(df_merge[["price"]])
+df_merge["price"]
+```
+
+### Extra Miles
+1. Cleaning data using regex (data is already clean , so mostly just changing data for regex)
+
+```{python}
+import re
+
+def clean_text(text):
+    if isinstance(text, str):
+        text = text.lower()  # lowercase everything
+        text = re.sub(r"[^a-z0-9\s]", " ", text)  # remove special chars
+        text = re.sub(r";", " ", text)  # replace semicolons with spaces
+        text = re.sub(r"\s+", " ", text)  # remove extra spaces
+        return text.strip()
+    return text
+
+df_merge["categories_clean"] = df_merge["categories"].apply(clean_text)
+df_merge["genres_clean"] = df_merge["genres"].apply(clean_text)
+df_merge["steamspy_tags_clean"] = df_merge["steamspy_tags"].apply(clean_text)
+
+df_merge[["categories", "categories_clean", "genres", "genres_clean", "steamspy_tags", "steamspy_tags_clean"]].head(10)
+```
+2. Clean text and nested json in link
+
+```{python}
+import ast
+url = "https://raw.githubusercontent.com/nnqomariyah/Fundamentals_of_Data_Science/main/week_3/data/movies_metadata.csv"
+df_movies = pd.read_csv(url)
+```
+
+```{python}
+def parse_and_clean_json(json_str):
+    try:
+        parsed = ast.literal_eval(json_str)  # safely parse
+        if isinstance(parsed, list):
+            names = [
+                item.get("name", "")
+                for item in parsed
+                if isinstance(item, dict) and "name" in item
+            ]
+            cleaned_names = [
+                re.sub(r"\s+", " ", name.strip())
+                for name in names
+            ]
+            return ", ".join(cleaned_names)
+    except Exception:
+        return ""
+    return ""
+
+json_columns = ["genres", "production_companies", "production_countries", "spoken_languages"]
+
+for col in json_columns:
+    df_movies[col + "_clean"] = df_movies[col].apply(parse_and_clean_json)
+
+df_movies["overview_clean"] = df_movies["overview"].apply(clean_text)
+
+df_movies[[
+    "title", "genres_clean", "production_companies_clean",
+    "production_countries_clean", "spoken_languages_clean", "overview_clean"
+]].head(5)
+```
